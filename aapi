@@ -1,0 +1,99 @@
+from flask import Flask, request, jsonify
+import os
+from dotenv import load_dotenv
+import requests
+from flask import Flask
+import cherrypy
+
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Welcome to the API!"
+
+if __name__ == '__main__':
+    app.run()
+
+# Cargar variables de entorno
+load_dotenv()
+
+# Variables de configuración
+API_KEY = os.getenv("API_KEY=d4b47924a4e770cf063374b8d12acc2b")
+VERIFICATION_TOKEN = os.getenv("876331021252180")
+
+# Inicializar la app
+app = Flask(__name__)
+
+# Reglas de respuesta iniciales
+rules = {
+    "hola": "¡Hola! ¿En qué puedo ayudarte?",
+    "adiós": "Gracias por contactarnos. ¡Hasta luego!",
+    "ayuda": "Aquí tienes nuestras opciones: ...",
+}
+
+# Endpoint para verificar el webhook
+@app.route("/webhook", methods=["GET"])
+def verify_webhook():
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+    if token == VERIFICATION_TOKEN:
+        return challenge, 200
+    return "Verification token mismatch", 403
+
+# Endpoint para recibir mensajes
+@app.route("/webhook", methods=["POST"])
+def handle_messages():
+    data = request.get_json()
+    if "entry" in data:
+        for entry in data["entry"]:
+            for message in entry.get("messaging", []):
+                if "message" in message:
+                    process_message(message)
+    return "EVENT_RECEIVED", 200
+
+# Función para procesar mensajes
+def process_message(message):
+    sender_id = message["sender"]["id"]
+    text = message["message"]["text"].lower()
+    response = get_response(text)
+    if response:
+        send_message(sender_id, response)
+
+# Función para buscar la respuesta en las reglas
+def get_response(text):
+    for keyword, response in rules.items():
+        if keyword in text:
+            return response
+    return None
+
+# Función para enviar mensajes
+def send_message(recipient_id, text):
+    url = f"https://graph.facebook.com/v16.0/me/messages?access_token={API_KEY}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {"text": text},
+    }
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code != 200:
+        print(f"Error enviando mensaje: {response.text}")
+
+# Endpoint para configurar reglas
+@app.route("/rules", methods=["POST", "GET"])
+def manage_rules():
+    global rules
+    if request.method == "POST":
+        data = request.json
+        keyword = data.get("keyword")
+        response = data.get("response")
+        if keyword and response:
+            rules[keyword] = response
+            return jsonify({"message": "Regla añadida con éxito", "rules": rules})
+        return jsonify({"error": "Datos incompletos"}), 400
+    elif request.method == "GET":
+        return jsonify(rules)
+
+# Iniciar la aplicación
+if __name__ == "__main__":
+    app.run(port=5000)
